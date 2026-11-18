@@ -11,6 +11,8 @@ export const DEFAULT_SETTINGS = Object.freeze({
     hideFolderedChatsInRoot: true,
     charFolders: [],
     charAssignments: {},
+    recentFolders: [],
+    recentAssignments: {},
     chatFoldersByScope: {},
     chatAssignmentsByScope: {},
 });
@@ -66,6 +68,34 @@ export function makeCharKey(avatar) {
  */
 export function makeGroupKey(groupId) {
     return `group:${String(groupId ?? '')}`;
+}
+
+/**
+ * Builds a composite assignment key for Recent Chats (`char:<avatar>::<chat>` or `group:<id>::<chat>`).
+ * @param {string} scopeKey
+ * @param {string} chatFileName
+ * @returns {string}
+ */
+export function makeRecentChatKey(scopeKey, chatFileName) {
+    const cleanScope = String(scopeKey ?? '').trim();
+    const cleanChat = stripJsonlExt(chatFileName);
+    if (!cleanScope || !cleanChat) return '';
+    return `${cleanScope}::${cleanChat}`;
+}
+
+/**
+ * Parses a composite Recent Chat assignment key into `{ scopeKey, chatKey }`.
+ * @param {string} compositeKey
+ * @returns {{ scopeKey: string, chatKey: string } | null}
+ */
+export function parseRecentChatKey(compositeKey) {
+    const str = String(compositeKey ?? '');
+    const sepIndex = str.indexOf('::');
+    if (sepIndex <= 0) return null;
+    const scopeKey = str.slice(0, sepIndex).trim();
+    const chatKey = stripJsonlExt(str.slice(sepIndex + 2));
+    if (!scopeKey || !chatKey) return null;
+    return { scopeKey, chatKey };
 }
 
 /**
@@ -180,6 +210,19 @@ export function normalizeSettings(rawSettings) {
     const charFolderIds = new Set(charFolders.map(f => f.id));
     const charAssignments = sanitizeAssignments(src.charAssignments, charFolderIds);
 
+    const recentFolders = sanitizeFolderList(src.recentFolders);
+    const recentFolderIds = new Set(recentFolders.map(f => f.id));
+    const recentAssignments = {};
+    const rawRecentAssign = sanitizeAssignments(src.recentAssignments, recentFolderIds);
+    for (const [rawKey, folderId] of Object.entries(rawRecentAssign)) {
+        const parsed = parseRecentChatKey(rawKey);
+        if (!parsed) continue;
+        const normalizedKey = makeRecentChatKey(parsed.scopeKey, parsed.chatKey);
+        if (normalizedKey) {
+            recentAssignments[normalizedKey] = folderId;
+        }
+    }
+
     const chatFoldersByScope = {};
     const chatAssignmentsByScope = {};
 
@@ -214,6 +257,8 @@ export function normalizeSettings(rawSettings) {
             : DEFAULT_SETTINGS.hideFolderedChatsInRoot,
         charFolders,
         charAssignments,
+        recentFolders,
+        recentAssignments,
         chatFoldersByScope,
         chatAssignmentsByScope,
     };
@@ -559,6 +604,49 @@ export function migrateAssignmentKey(assignments, oldKey, newKey) {
 }
 
 /**
+ * Migrates all Recent Chat assignment keys belonging to `oldScopeKey` over to `newScopeKey`.
+ * @param {Record<string, string>} recentAssignments
+ * @param {string} oldScopeKey
+ * @param {string} newScopeKey
+ * @returns {boolean}
+ */
+export function migrateRecentAssignmentsByScope(recentAssignments, oldScopeKey, newScopeKey) {
+    if (!recentAssignments || !oldScopeKey || !newScopeKey || oldScopeKey === newScopeKey) return false;
+    const prefix = `${oldScopeKey}::`;
+    let changed = false;
+    for (const key of Object.keys(recentAssignments)) {
+        if (!key.startsWith(prefix)) continue;
+        const chatKey = key.slice(prefix.length);
+        const targetKey = makeRecentChatKey(newScopeKey, chatKey);
+        if (targetKey) {
+            recentAssignments[targetKey] = recentAssignments[key];
+            delete recentAssignments[key];
+            changed = true;
+        }
+    }
+    return changed;
+}
+
+/**
+ * Removes all Recent Chat assignment keys belonging to `scopeKey`.
+ * @param {Record<string, string>} recentAssignments
+ * @param {string} scopeKey
+ * @returns {boolean}
+ */
+export function deleteRecentAssignmentsByScope(recentAssignments, scopeKey) {
+    if (!recentAssignments || !scopeKey) return false;
+    const prefix = `${scopeKey}::`;
+    let changed = false;
+    for (const key of Object.keys(recentAssignments)) {
+        if (key.startsWith(prefix)) {
+            delete recentAssignments[key];
+            changed = true;
+        }
+    }
+    return changed;
+}
+
+/**
  * Removes assignments whose item key does not exist in `validItemKeys` or whose folderId doesn't exist.
  * @param {Array<any>} folders
  * @param {Record<string, string>} assignments
@@ -634,7 +722,13 @@ export function parseImportedConfig(raw) {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
         return null;
     }
-    const hasKnownField = 'charFolders' in raw || 'charAssignments' in raw || 'chatFoldersByScope' in raw || 'chatAssignmentsByScope' in raw;
+    const hasKnownField =
+        'charFolders' in raw ||
+        'charAssignments' in raw ||
+        'recentFolders' in raw ||
+        'recentAssignments' in raw ||
+        'chatFoldersByScope' in raw ||
+        'chatAssignmentsByScope' in raw;
     if (!hasKnownField) {
         return null;
     }

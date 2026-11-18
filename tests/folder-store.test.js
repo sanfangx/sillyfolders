@@ -6,6 +6,7 @@ import {
     computeFolderStats,
     createFolder,
     deleteFolder,
+    deleteRecentAssignmentsByScope,
     ensureChatScope,
     flattenFolderTree,
     getBreadcrumbs,
@@ -14,9 +15,12 @@ import {
     getFolderPathLabel,
     makeCharKey,
     makeGroupKey,
+    makeRecentChatKey,
     migrateAssignmentKey,
+    migrateRecentAssignmentsByScope,
     normalizeSettings,
     parseImportedConfig,
+    parseRecentChatKey,
     pruneAssignments,
     sortCharacterEntities,
     stripJsonlExt,
@@ -181,4 +185,46 @@ test('sortCharacterEntities respects SillyTavern sorting fields and directions',
         sortCharacterEntities(entities, 'chat_size', 'asc').map(e => e.item.name),
         ['Zara', 'Party', 'Alice'],
     );
+});
+
+test('recent chat composite keys, normalization, scope migration, and deletion', () => {
+    const kChar = makeRecentChatKey('char:alice.png', 'Main Story.jsonl');
+    const kGrp = makeRecentChatKey('group:grp_1', 'Party Chat');
+    assert.equal(kChar, 'char:alice.png::Main Story');
+    assert.equal(kGrp, 'group:grp_1::Party Chat');
+    assert.deepEqual(parseRecentChatKey(kChar), { scopeKey: 'char:alice.png', chatKey: 'Main Story' });
+    assert.equal(parseRecentChatKey('invalid-key'), null);
+
+    const normalized = normalizeSettings({
+        recentFolders: [
+            { id: 'rf1', name: 'Mainline', parentId: null, color: '#4f86f7' },
+        ],
+        recentAssignments: {
+            'char:alice.png::Chapter 1.jsonl': 'rf1',
+            'group:grp_1::BadChat': 'missing_folder',
+            'badformat': 'rf1',
+        },
+    });
+    assert.equal(normalized.recentFolders.length, 1);
+    assert.deepEqual(normalized.recentAssignments, {
+        'char:alice.png::Chapter 1': 'rf1',
+    });
+
+    assert.equal(
+        migrateRecentAssignmentsByScope(normalized.recentAssignments, 'char:alice.png', 'char:alice_v2.png'),
+        true,
+    );
+    assert.deepEqual(normalized.recentAssignments, {
+        'char:alice_v2.png::Chapter 1': 'rf1',
+    });
+
+    assert.equal(deleteRecentAssignmentsByScope(normalized.recentAssignments, 'char:alice_v2.png'), true);
+    assert.deepEqual(normalized.recentAssignments, {});
+
+    const imported = parseImportedConfig({
+        recentFolders: [{ id: 'rf2', name: 'Archived', parentId: null }],
+        recentAssignments: { 'char:bob.png::Old Chat.jsonl': 'rf2' },
+    });
+    assert.ok(imported);
+    assert.equal(imported.recentAssignments['char:bob.png::Old Chat'], 'rf2');
 });

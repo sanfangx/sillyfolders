@@ -450,6 +450,44 @@ body.charListGrid #rm_print_characters_block .stf-folder-badge {
     display: none;
 }
 
+/* Recent Chats (Welcome screen) folder compatibility */
+.stf-recent-toolbar {
+    margin: 2px 0 6px 0;
+}
+
+.stf-folder-card-recent {
+    border-radius: 10px;
+    padding: 6px 10px;
+    margin-bottom: 0;
+}
+
+.stf-folder-card-recent .stf-folder-avatar {
+    width: 42px;
+    height: 42px;
+    min-width: 42px;
+    font-size: 1.15em;
+}
+
+.welcomeRecent .recentChatList .recentChat.stf-force-show-recent {
+    display: flex !important;
+}
+
+.welcomeRecent .recentChatList .recentChat.stf-collapsed-extra {
+    display: none !important;
+}
+
+.stf-recent-move-btn {
+    margin: 0;
+    font-size: 0.8em;
+    cursor: pointer;
+}
+
+.stf-recent-folder-badge {
+    flex-shrink: 0;
+    margin-bottom: 0;
+    max-width: 120px;
+}
+
 /* Chat move button in .select_chat_actions */
 .stf-chat-move-btn {
     cursor: pointer;

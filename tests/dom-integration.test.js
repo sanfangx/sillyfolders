@@ -470,10 +470,12 @@ function setupEnvironment() {
     const shadowChatPopup = createEl('div', { id: 'shadow_select_chat_popup' }, [selectChatPopup]);
     shadowChatPopup.style.display = 'none';
 
+    const chatContainer = createEl('div', { id: 'chat' });
+
     const extSettings = createEl('div', { id: 'extensions_settings' });
     const extMenu = createEl('div', { id: 'extensionsMenu' });
 
-    body.append(rmChars, charTpl, groupTpl, shadowChatPopup, extSettings, extMenu);
+    body.append(rmChars, charTpl, groupTpl, shadowChatPopup, chatContainer, extSettings, extMenu);
 
     doc.getElementById = (id) => doc.querySelector(`#${id}`);
     doc.querySelector = (sel) => body.querySelector(sel);
@@ -646,6 +648,63 @@ function setupEnvironment() {
         shadowChatPopup.style.display = 'block';
     };
 
+    let recentChatOpenCount = 0;
+    const renderWelcomePanel = (items, collapsedCount = 3) => {
+        chatContainer.replaceChildren();
+        const recentChatList = createEl('div', { class: 'recentChatList' });
+        items.forEach((item, index) => {
+            const isHidden = index >= collapsedCount;
+            const card = createEl('div', {
+                class: `recentChat${isHidden ? ' hidden' : ''}${item.group ? ' group' : ''}`,
+                'data-file': item.file,
+                'data-avatar': item.avatar || '',
+                'data-group': item.group || '',
+            }, [
+                createEl('div', { class: 'avatar' }, [createEl('img')]),
+                createEl('div', { class: 'recentChatInfo' }, [
+                    createEl('div', { class: 'chatNameContainer' }, [
+                        createEl('div', { class: 'chatName' }, [
+                            createEl('strong', { class: 'characterName', textContent: item.charName }),
+                            createEl('span', { textContent: item.file }),
+                        ]),
+                        createEl('small', { class: 'chatDate', textContent: 'Today' }),
+                        createEl('div', { class: 'chatActions' }, [
+                            createEl('button', { class: 'menu_button menu_button_icon pinChat' }),
+                            createEl('button', { class: 'menu_button menu_button_icon renameChat' }),
+                            createEl('button', { class: 'menu_button menu_button_icon deleteChat' }),
+                        ]),
+                    ]),
+                    createEl('div', { class: 'chatMessageContainer' }),
+                ]),
+            ]);
+            card.addEventListener('click', () => {
+                recentChatOpenCount++;
+            });
+            recentChatList.appendChild(card);
+        });
+
+        if (items.length > collapsedCount) {
+            const hiddenItems = recentChatList.querySelectorAll('.recentChat.hidden');
+            const showMoreBtn = createEl('button', { class: 'menu_button menu_button_icon showMoreChats' });
+            showMoreBtn.addEventListener('click', () => {
+                const rotate = showMoreBtn.classList.contains('rotated');
+                hiddenItems.forEach(c => c.classList.toggle('hidden', rotate));
+                showMoreBtn.classList.toggle('rotated', !rotate);
+            });
+            recentChatList.appendChild(showMoreBtn);
+        }
+
+        const welcomePanel = createEl('div', { class: 'welcomePanel' }, [
+            createEl('div', { class: 'welcomeHeaderTitle' }),
+            createEl('div', { class: 'welcomeHeader' }, [
+                createEl('div', { class: 'recentChatsTitle', textContent: 'Recent Chats' }),
+            ]),
+            createEl('div', { class: 'welcomeRecent' }, [recentChatList]),
+        ]);
+        chatContainer.appendChild(welcomePanel);
+        return welcomePanel;
+    };
+
     return {
         doc,
         state,
@@ -653,8 +712,11 @@ function setupEnvironment() {
         listBlock,
         selectChatDiv,
         shadowChatPopup,
+        chatContainer,
         renderNativeCharPage,
         renderPastChats,
+        renderWelcomePanel,
+        getRecentChatOpenCount: () => recentChatOpenCount,
         getSaveCount: () => saveCount,
     };
 }
@@ -1028,4 +1090,96 @@ test('full DOM workflow: character folders and chat folders end-to-end', async (
     assert.equal(env.doc.getElementById('CharID0').style.display, 'none');
     assert.equal(env.doc.getElementById('CharID0').classList.contains('stf-hidden-by-folder'), true);
     favFilter.remove();
+
+    // 18. Recent Chats ("最近的聊天" / `.welcomePanel .recentChatList`) folders end-to-end
+    const welcomePanel = env.renderWelcomePanel([
+        { avatar: 'alice.png', charName: 'Alice', file: 'Alice - Chat 1' },
+        { avatar: 'bob.png', charName: 'Bob', file: 'Bob - Chat 1' },
+        { avatar: 'alice.png', charName: 'Alice', file: 'Alice - Chat 2' },
+        { group: 'grp_1', charName: 'Adventure Party', file: 'Group Chat 1' }, // index 3 -> `.hidden`
+        { avatar: 'bob.png', charName: 'Bob', file: 'Bob - Chat 2' },         // index 4 -> `.hidden`
+    ], 3);
+    await new Promise(r => setTimeout(r, 20));
+
+    const recentToolbar = env.doc.getElementById('stf_recent_chat_toolbar');
+    assert.ok(recentToolbar, 'Recent chats toolbar mounts inside .welcomeRecent');
+    const recentChatList = welcomePanel.querySelector('.recentChatList');
+
+    // Create a root folder inside Recent Chats
+    env.popupQueue.push((popup) => {
+        popup.content.querySelector('input').value = '最近主线对话';
+        popup.completeAffirmative();
+    });
+    await recentToolbar.querySelector('.stf-toolbar-btn').click();
+    await new Promise(r => setTimeout(r, 20));
+
+    const recentFolderCards = recentChatList.querySelectorAll('.stf-folder-card-recent');
+    assert.equal(recentFolderCards.length, 1);
+    const recentFolderId = recentFolderCards[0].dataset.folderId;
+
+    // Move first recent chat (Alice - Chat 1) and 4th recent chat (Group Chat 1, originally `.hidden`) into folder
+    const recentRows = recentChatList.querySelectorAll(':scope > .recentChat');
+    const prevOpenCount = env.getRecentChatOpenCount();
+    env.popupQueue.push((popup) => {
+        popup.content.querySelectorAll('.stf-picker-item:not(.stf-picker-root)')[0].click();
+    });
+    await recentRows[0].querySelector('.stf-recent-move-btn').click();
+    await new Promise(r => setTimeout(r, 20));
+    assert.equal(env.getRecentChatOpenCount(), prevOpenCount, 'Move button click must not open chat');
+
+    env.popupQueue.push((popup) => {
+        popup.content.querySelectorAll('.stf-picker-item:not(.stf-picker-root)')[0].click();
+    });
+    await recentRows[3].querySelector('.stf-recent-move-btn').click();
+    await new Promise(r => setTimeout(r, 20));
+
+    // At root (`hideFolderedChatsInRoot: true`): moved rows are hidden, next unfoldered row promotes into collapsed limit (3 visible)
+    assert.equal(recentRows[0].classList.contains('stf-hidden-by-folder'), true);
+    assert.equal(recentRows[3].classList.contains('stf-hidden-by-folder'), true);
+    assert.equal(recentRows[1].classList.contains('stf-force-show-recent'), true);
+    assert.equal(recentRows[2].classList.contains('stf-force-show-recent'), true);
+    assert.equal(recentRows[4].classList.contains('stf-force-show-recent'), true);
+
+    // Open folder -> BOTH Alice - Chat 1 and Group Chat 1 show (`.stf-force-show-recent` overrides `.hidden`), others & showMoreChats hidden
+    recentChatList.querySelector('.stf-folder-card-recent').click();
+    const visibleInRecentFolder = recentChatList
+        .querySelectorAll(':scope > .recentChat')
+        .filter(c => !c.classList.contains('stf-hidden-by-folder'));
+    assert.equal(visibleInRecentFolder.length, 2);
+    assert.equal(visibleInRecentFolder[1].classList.contains('stf-force-show-recent'), true);
+    assert.equal(recentChatList.querySelector('button.showMoreChats').classList.contains('stf-hidden-by-folder'), true);
+
+    // Batch mode on `.recentChatList` intercepts row click cleanly
+    const recentBatchBtn = recentToolbar.querySelectorAll('.stf-toolbar-btn')[1];
+    recentBatchBtn.click();
+    visibleInRecentFolder[0].click();
+    assert.equal(env.getRecentChatOpenCount(), prevOpenCount);
+    assert.equal(visibleInRecentFolder[0].classList.contains('stf-batch-selected'), true);
+    recentBatchBtn.click();
+
+    // Wand menu assigns active chat into Recent Chats folder
+    env.state.groupId = null;
+    env.state.characterId = 1; // Bob
+    env.state.chatId = 'Bob - Chat 1';
+    env.popupQueue.push((popup) => {
+        popup.content.querySelectorAll('.stf-picker-item:not(.stf-picker-root)')[0].click();
+    });
+    await env.doc.getElementById('stf_wand_move_chat').click();
+    await new Promise(r => setTimeout(r, 20));
+    assert.equal(
+        env.state.extensionSettings.st_folders.recentAssignments['char:bob.png::Bob - Chat 1'],
+        recentFolderId,
+    );
+
+    // CHAT_RENAMED migrates Recent Chats key as well
+    env.state.eventSource.emit(env.state.eventTypes.CHAT_RENAMED, {
+        avatarId: 'bob.png',
+        groupId: null,
+        oldFileName: 'Bob - Chat 1.jsonl',
+        newFileName: 'Bob - New Chapter.jsonl',
+    });
+    assert.equal(
+        env.state.extensionSettings.st_folders.recentAssignments['char:bob.png::Bob - New Chapter'],
+        recentFolderId,
+    );
 });

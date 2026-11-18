@@ -28,6 +28,7 @@ import {
     openFolderFormPopup,
     openFolderPickerPopup,
     renderBreadcrumbs,
+    resolveEntityPreviewUrls,
     revealFolderCard,
     setActiveDragPayload,
     setElementFolderHidden,
@@ -162,41 +163,6 @@ function getEntityInfoFromElement(el) {
     }
 
     return null;
-}
-
-/**
- * Resolves thumbnail URLs for previewing items inside a character folder.
- * @param {string[]} previewKeys
- * @returns {string[]}
- */
-function resolveCharPreviewUrls(previewKeys) {
-    const context = getStContext();
-    if (!context) return [];
-    const urls = [];
-
-    for (const key of previewKeys) {
-        if (urls.length >= 4) break;
-        if (key.startsWith('char:')) {
-            const avatar = key.slice(5);
-            const char = context.characters?.find(c => c.avatar === avatar);
-            if (char && char.avatar !== 'none') {
-                const url = context.getThumbnailUrl?.('avatar', char.avatar);
-                if (url) urls.push(url);
-            }
-        } else if (key.startsWith('group:')) {
-            const groupId = key.slice(6);
-            const group = context.groups?.find(g => g.id === groupId);
-            if (group?.members?.length) {
-                const firstMember = context.characters?.find(c => c.avatar === group.members[0]);
-                if (firstMember && firstMember.avatar !== 'none') {
-                    const url = context.getThumbnailUrl?.('avatar', firstMember.avatar);
-                    if (url) urls.push(url);
-                }
-            }
-        }
-    }
-
-    return urls;
 }
 
 /**
@@ -848,7 +814,7 @@ function buildCharFolderCardsFragment(folderList, allFolders, statsMap) {
             folder,
             folders: allFolders,
             stats,
-            previewUrls: resolveCharPreviewUrls(stats.previewKeys),
+            previewUrls: resolveEntityPreviewUrls(stats.previewKeys),
             onOpen: navigateToCharFolder,
             onEdit: handleEditCharFolder,
             onDelete: handleDeleteCharFolder,

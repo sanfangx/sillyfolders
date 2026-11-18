@@ -1,6 +1,6 @@
 import { parseImportedConfig } from './folder-store.js';
 import { setLanguagePreference, tr } from './i18n.js';
-import { moveCurrentChatToFolder } from './chat-folders.js';
+import { moveCurrentChatToRecentFolder } from './recent-folders.js';
 import {
     cleanupOrphanedCharAssignments,
     getSettings,
@@ -56,10 +56,12 @@ export function refreshSettingsPanel() {
     if (statsEl) {
         const charFoldersCount = settings.charFolders.length;
         const charItemsCount = Object.keys(settings.charAssignments).length;
-        const chatFoldersCount = Object.values(settings.chatFoldersByScope)
+        const scopedChatFoldersCount = Object.values(settings.chatFoldersByScope)
             .reduce((sum, list) => sum + (Array.isArray(list) ? list.length : 0), 0);
-        const chatItemsCount = Object.values(settings.chatAssignmentsByScope)
+        const scopedChatItemsCount = Object.values(settings.chatAssignmentsByScope)
             .reduce((sum, map) => sum + (map && typeof map === 'object' ? Object.keys(map).length : 0), 0);
+        const chatFoldersCount = settings.recentFolders.length + scopedChatFoldersCount;
+        const chatItemsCount = Object.keys(settings.recentAssignments).length + scopedChatItemsCount;
 
         statsEl.textContent = tr('statsTemplate', {
             charFolders: charFoldersCount,
@@ -276,7 +278,7 @@ export function initSettingsPanel() {
         span.textContent = tr('moveCurrentChatToFolder');
         wandMenuItemEl.appendChild(span);
         wandMenuItemEl.addEventListener('click', async () => {
-            await moveCurrentChatToFolder();
+            await moveCurrentChatToRecentFolder();
         });
         extensionsMenu.appendChild(wandMenuItemEl);
     }

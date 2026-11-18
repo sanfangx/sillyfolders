@@ -6,6 +6,7 @@ import {
     makeGroupKey,
     getChatScopeKey,
     ensureChatScope,
+    parseRecentChatKey,
 } from './folder-store.js';
 import { setLanguagePreference } from './i18n.js';
 
@@ -122,10 +123,21 @@ export function cleanupOrphanedCharAssignments() {
         }
     }
 
-    if (removed + scopeRemoved > 0) {
+    // Also prune Recent Chat assignments pointing to missing characters/groups or missing folders
+    const recentFolderIds = new Set(settings.recentFolders.map(f => f.id));
+    let recentRemoved = 0;
+    for (const [key, folderId] of Object.entries(settings.recentAssignments)) {
+        const parsed = parseRecentChatKey(key);
+        if (!parsed || !validKeys.has(parsed.scopeKey) || !recentFolderIds.has(folderId)) {
+            delete settings.recentAssignments[key];
+            recentRemoved++;
+        }
+    }
+
+    if (removed + scopeRemoved + recentRemoved > 0) {
         saveSettings();
     }
-    return removed + scopeRemoved;
+    return removed + scopeRemoved + recentRemoved;
 }
 
 /**

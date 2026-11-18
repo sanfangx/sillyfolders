@@ -4,6 +4,8 @@ import {
     flattenFolderTree,
     getBreadcrumbs,
     getDescendantIds,
+    getFolderPathLabel,
+    parseRecentChatKey,
     wouldCreateCycle,
 } from './folder-store.js';
 import { tr } from './i18n.js';
@@ -693,6 +695,263 @@ export function setElementFolderHidden(el, hidden) {
         el.classList.remove('stf-hidden-by-folder');
         delete el.dataset.stfHiddenByFolder;
     }
+}
+
+/**
+ * Builds a clickable folder badge pill for item cards (`char`, `chat`, or `recent`).
+ * @param {object} params
+ * @param {object} params.folder
+ * @param {Array<any>} params.folders
+ * @param {string} [params.extraClass]
+ * @param {(folderId: string) => void} params.onOpen
+ * @returns {HTMLSpanElement}
+ */
+export function buildFolderBadge({ folder, folders, extraClass = '', onOpen }) {
+    const badge = document.createElement('span');
+    badge.className = extraClass ? `stf-folder-badge ${extraClass}` : 'stf-folder-badge';
+    badge.title = tr('folderBadgeTitle', { path: getFolderPathLabel(folders, folder.id) });
+    if (folder.color) {
+        badge.style.setProperty('--stf-badge-color', folder.color);
+        badge.classList.add('has-color');
+    }
+    badge.appendChild(createIcon('fa-folder'));
+    const badgeText = document.createElement('span');
+    badgeText.textContent = folder.name;
+    badge.appendChild(badgeText);
+
+    badge.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+        onOpen?.(folder.id);
+    });
+
+    return badge;
+}
+
+/**
+ * Resolves thumbnail URLs (max 4, deduplicated) for entity keys (`char:...`, `group:...`, or `scope::chat`).
+ * @param {string[]} previewKeys
+ * @returns {string[]}
+ */
+export function resolveEntityPreviewUrls(previewKeys) {
+    const context = getStContext();
+    if (!context) return [];
+    const urls = [];
+
+    for (const rawKey of previewKeys) {
+        if (urls.length >= 4) break;
+        const parsed = parseRecentChatKey(rawKey);
+        const entityKey = parsed ? parsed.scopeKey : String(rawKey || '');
+        let url = '';
+
+        if (entityKey.startsWith('char:')) {
+            const avatar = entityKey.slice(5);
+            const char = context.characters?.find(c => c.avatar === avatar);
+            if (char && char.avatar !== 'none') {
+                url = context.getThumbnailUrl?.('avatar', char.avatar) || '';
+            }
+        } else if (entityKey.startsWith('group:')) {
+            const groupId = entityKey.slice(6);
+            const group = context.groups?.find(g => String(g.id) === String(groupId));
+            if (group?.members?.length) {
+                const firstMember = context.characters?.find(c => c.avatar === group.members[0]);
+                if (firstMember && firstMember.avatar !== 'none') {
+                    url = context.getThumbnailUrl?.('avatar', firstMember.avatar) || '';
+                }
+            }
+        }
+
+        if (url && !urls.includes(url)) {
+            urls.push(url);
+        }
+    }
+
+    return urls;
+}
+
+/**
+ * Builds a reusable folder toolbar scaffold (back button, breadcrumbs, create/batch/hide buttons, and batch bar).
+ * @param {object} params
+ * @param {string} params.id
+ * @param {string} [params.extraClass]
+ * @param {() => void} params.onBack
+ * @param {() => void} params.onCreateFolder
+ * @param {() => void} params.onToggleBatch
+ * @param {() => void} params.onToggleHide
+ * @param {() => void} params.onBatchSelectAll
+ * @param {() => void} params.onBatchMove
+ * @param {() => void} params.onBatchMoveOut
+ * @param {() => void} params.onBatchCancel
+ */
+export function createFolderToolbarScaffold({
+    id,
+    extraClass = '',
+    onBack,
+    onCreateFolder,
+    onToggleBatch,
+    onToggleHide,
+    onBatchSelectAll,
+    onBatchMove,
+    onBatchMoveOut,
+    onBatchCancel,
+}) {
+    const toolbarEl = document.createElement('div');
+    toolbarEl.id = id;
+    toolbarEl.className = extraClass ? `stf-toolbar ${extraClass}` : 'stf-toolbar';
+
+    const topRow = document.createElement('div');
+    topRow.className = 'stf-toolbar-row';
+
+    const backBtn = document.createElement('button');
+    backBtn.type = 'button';
+    backBtn.className = 'menu_button stf-back-btn';
+    backBtn.appendChild(createIcon('fa-arrow-left'));
+    backBtn.addEventListener('click', onBack);
+
+    const breadcrumbEl = document.createElement('div');
+    breadcrumbEl.className = 'stf-breadcrumbs';
+
+    const actionsWrap = document.createElement('div');
+    actionsWrap.className = 'stf-toolbar-actions';
+
+    const newFolderBtn = document.createElement('button');
+    newFolderBtn.type = 'button';
+    newFolderBtn.className = 'menu_button menu_button_icon stf-toolbar-btn';
+    newFolderBtn.appendChild(createIcon('fa-folder-plus'));
+    const newLabel = document.createElement('span');
+    newLabel.textContent = tr('newFolderShort');
+    newFolderBtn.appendChild(newLabel);
+    newFolderBtn.addEventListener('click', onCreateFolder);
+
+    const batchBtn = document.createElement('button');
+    batchBtn.type = 'button';
+    batchBtn.className = 'menu_button menu_button_icon stf-toolbar-btn';
+    batchBtn.appendChild(createIcon('fa-list-check'));
+    const batchLabel = document.createElement('span');
+    batchLabel.textContent = tr('batchSelect');
+    batchBtn.appendChild(batchLabel);
+    batchBtn.addEventListener('click', onToggleBatch);
+
+    const hideToggleBtn = document.createElement('button');
+    hideToggleBtn.type = 'button';
+    hideToggleBtn.className = 'menu_button stf-toolbar-btn stf-icon-only-btn';
+    hideToggleBtn.appendChild(createIcon('fa-eye-slash'));
+    hideToggleBtn.addEventListener('click', onToggleHide);
+
+    actionsWrap.append(newFolderBtn, batchBtn, hideToggleBtn);
+    topRow.append(backBtn, breadcrumbEl, actionsWrap);
+
+    const batchBarEl = document.createElement('div');
+    batchBarEl.className = 'stf-batch-bar';
+    batchBarEl.style.display = 'none';
+
+    const countSpan = document.createElement('span');
+    countSpan.className = 'stf-batch-count';
+
+    const selectAllBtn = document.createElement('button');
+    selectAllBtn.type = 'button';
+    selectAllBtn.className = 'menu_button stf-batch-select-all';
+    selectAllBtn.addEventListener('click', onBatchSelectAll);
+
+    const batchMoveBtn = document.createElement('button');
+    batchMoveBtn.type = 'button';
+    batchMoveBtn.className = 'menu_button stf-batch-move stf-primary-btn';
+    batchMoveBtn.addEventListener('click', onBatchMove);
+
+    const batchMoveOutBtn = document.createElement('button');
+    batchMoveOutBtn.type = 'button';
+    batchMoveOutBtn.className = 'menu_button stf-batch-move-out';
+    batchMoveOutBtn.addEventListener('click', onBatchMoveOut);
+
+    const batchCancelBtn = document.createElement('button');
+    batchCancelBtn.type = 'button';
+    batchCancelBtn.className = 'menu_button stf-batch-cancel';
+    batchCancelBtn.addEventListener('click', onBatchCancel);
+
+    batchBarEl.append(countSpan, selectAllBtn, batchMoveBtn, batchMoveOutBtn, batchCancelBtn);
+    toolbarEl.append(topRow, batchBarEl);
+
+    return {
+        toolbarEl,
+        backBtn,
+        breadcrumbEl,
+        newFolderBtn,
+        batchBtn,
+        hideToggleBtn,
+        batchBarEl,
+    };
+}
+
+/**
+ * Updates common toolbar controls (breadcrumbs, labels, batch bar, hide toggle).
+ * @param {ReturnType<typeof createFolderToolbarScaffold>} refs
+ * @param {object} state
+ */
+export function updateFolderToolbarScaffold(refs, {
+    enabled,
+    domain,
+    rootLabel,
+    folders,
+    activeFolderId,
+    isBatchMode,
+    selectedCount,
+    hideInRoot,
+    hideActiveHintKey,
+    hideInactiveHintKey,
+    onNavigate,
+    onDropItems,
+    onDropFolder,
+}) {
+    const { toolbarEl, backBtn, breadcrumbEl, newFolderBtn, batchBtn, hideToggleBtn, batchBarEl } = refs;
+    if (!toolbarEl) return;
+
+    if (!enabled) {
+        toolbarEl.style.display = 'none';
+        return;
+    }
+    toolbarEl.style.display = '';
+
+    renderBreadcrumbs(breadcrumbEl, {
+        domain,
+        rootLabel,
+        folders,
+        activeFolderId,
+        onNavigate,
+        onDropItems,
+        onDropFolder,
+    });
+
+    backBtn.style.display = activeFolderId ? '' : 'none';
+    backBtn.title = tr('backUp');
+
+    newFolderBtn.title = tr('newFolder');
+    const newLabel = newFolderBtn.querySelector('span');
+    if (newLabel) newLabel.textContent = tr('newFolderShort');
+
+    batchBtn.classList.toggle('active', isBatchMode);
+    batchBtn.title = tr('batchSelect');
+    const batchLabel = batchBtn.querySelector('span');
+    if (batchLabel) batchLabel.textContent = isBatchMode ? tr('batchDone') : tr('batchSelect');
+
+    hideToggleBtn.title = tr(hideInRoot ? hideActiveHintKey : hideInactiveHintKey);
+    hideToggleBtn.classList.toggle('active', hideInRoot);
+    const icon = hideToggleBtn.querySelector('i');
+    if (icon) {
+        icon.className = hideInRoot ? 'fa-solid fa-eye-slash' : 'fa-solid fa-eye';
+    }
+
+    batchBarEl.style.display = isBatchMode ? 'flex' : 'none';
+    const countEl = batchBarEl.querySelector('.stf-batch-count');
+    if (countEl) countEl.textContent = tr('batchSelectedCount', { count: selectedCount });
+    const selAllBtn = batchBarEl.querySelector('.stf-batch-select-all');
+    if (selAllBtn) selAllBtn.textContent = tr('selectAllVisible');
+    const moveBtn = batchBarEl.querySelector('.stf-batch-move');
+    if (moveBtn) moveBtn.textContent = tr('batchMoveTo');
+    const moveOutBtn = batchBarEl.querySelector('.stf-batch-move-out');
+    if (moveOutBtn) moveOutBtn.textContent = tr('batchMoveOut');
+    const cancelBtn = batchBarEl.querySelector('.stf-batch-cancel');
+    if (cancelBtn) cancelBtn.textContent = tr('cancel');
 }
 
 /**

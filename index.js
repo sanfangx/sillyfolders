@@ -1,5 +1,6 @@
 import { initCharFolders, renderCharacterFolderView } from './src/char-folders.js';
 import { initChatFolders, renderChatFolderView } from './src/chat-folders.js';
+import { initRecentFolders, renderRecentChatFolderView } from './src/recent-folders.js';
 import {
     getSettings,
     getStContext,
@@ -13,6 +14,7 @@ let initialized = false;
 function refreshAllViews() {
     refreshSettingsPanel();
     renderCharacterFolderView();
+    renderRecentChatFolderView();
     if (document.getElementById('shadow_select_chat_popup')?.style.display !== 'none') {
         renderChatFolderView();
     }
@@ -36,6 +38,7 @@ function initializeExtension() {
 
     initCharFolders();
     initChatFolders();
+    initRecentFolders();
     initSettingsPanel();
 
     const { eventSource, eventTypes } = context;
