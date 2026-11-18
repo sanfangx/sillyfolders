@@ -1,0 +1,13 @@
+{
+  "display_name": "Folders (角色与对话文件夹)",
+  "loading_order": 100,
+  "requires": [],
+  "optional": [],
+  "dependencies": [],
+  "js": "index.js",
+  "css": "style.css",
+  "author": "sanfangx",
+  "version": "1.0.0",
+  "homePage": "https://github.com/sanfangx/sillywenjianjia",
+  "auto_update": true
+}
