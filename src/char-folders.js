@@ -134,7 +134,11 @@ function getEntityInfoFromElement(el) {
     if (!context) return null;
 
     if (el.classList.contains('character_select')) {
-        const rawChid = el.getAttribute('data-chid') ?? el.getAttribute('chid');
+        let rawChid = el.getAttribute('data-chid') ?? el.getAttribute('chid');
+        if ((rawChid === null || rawChid === '') && el.id) {
+            const idMatch = el.id.match(/^CharID(\d+)$/);
+            if (idMatch) rawChid = idMatch[1];
+        }
         if (rawChid === null || rawChid === '') return null;
         const chid = Number(rawChid);
         const char = Number.isInteger(chid) ? context.characters?.[chid] : null;
@@ -148,7 +152,7 @@ function getEntityInfoFromElement(el) {
 
     if (el.classList.contains('group_select')) {
         const grid = el.getAttribute('data-grid') || el.getAttribute('grid') || globalThis.jQuery?.(el).data('id');
-        const group = context.groups?.find(g => g.id === grid);
+        const group = context.groups?.find(g => String(g.id) === String(grid));
         if (!group?.id) return null;
         return {
             key: makeGroupKey(group.id),
@@ -575,11 +579,12 @@ async function openMovePickerForKeys(keys, singleName = '') {
 
     if (!picked) return;
 
-    assignItemsToFolder(settings.charFolders, settings.charAssignments, keys, picked.targetFolderId);
+    const latestSettings = getSettings();
+    assignItemsToFolder(latestSettings.charFolders, latestSettings.charAssignments, keys, picked.targetFolderId);
     saveSettings();
 
     if (picked.targetFolderId) {
-        const target = settings.charFolders.find(f => f.id === picked.targetFolderId);
+        const target = latestSettings.charFolders.find(f => f.id === picked.targetFolderId);
         globalThis.toastr?.success?.(tr('movedToFolder', { name: target?.name || '' }));
     } else {
         globalThis.toastr?.success?.(tr('movedToRoot'));
@@ -762,8 +767,8 @@ function updateCharToolbar({ totalItems = 0, pageSize = DEFAULT_PAGE_SIZE, showC
     }
 
     if (hideToggleBtn) {
-        hideToggleBtn.title = tr('toggleHideFolderedChars');
-        hideToggleBtn.classList.toggle('active', !settings.hideFolderedCharsInRoot);
+        hideToggleBtn.title = tr(settings.hideFolderedCharsInRoot ? 'hideCharsActiveHint' : 'hideCharsInactiveHint');
+        hideToggleBtn.classList.toggle('active', settings.hideFolderedCharsInRoot);
         const icon = hideToggleBtn.querySelector('i');
         if (icon) {
             icon.className = settings.hideFolderedCharsInRoot ? 'fa-solid fa-eye-slash' : 'fa-solid fa-eye';
@@ -855,6 +860,28 @@ function buildCharFolderCardsFragment(folderList, allFolders, statsMap) {
 }
 
 /**
+ * Applies root visibility & folder-badge decoration consistently across native card elements.
+ * @param {Element[]} cards
+ * @param {object} settings
+ * @param {{ forceShowAll?: boolean }} [options]
+ */
+function applyRootCardsFolderVisibility(cards, settings, { forceShowAll = false } = {}) {
+    for (const card of cards) {
+        if (!(card instanceof HTMLElement)) continue;
+        const info = getEntityInfoFromElement(card);
+        const assignedId = info ? settings.charAssignments[info.key] : null;
+        const hasValidFolder = Boolean(assignedId && settings.charFolders.some(f => f.id === assignedId));
+
+        if (!forceShowAll && settings.hideFolderedCharsInRoot && hasValidFolder) {
+            setElementFolderHidden(card, true);
+        } else {
+            setElementFolderHidden(card, false);
+            decorateEntityCard(card, { showBadge: forceShowAll || !settings.hideFolderedCharsInRoot });
+        }
+    }
+}
+
+/**
  * Applies folder rendering inside `#rm_print_characters_block`.
  * @param {{ fromNativePageLoad?: boolean }} [options]
  */
@@ -887,6 +914,8 @@ export function renderCharacterFolderView({ fromNativePageLoad = false, pinnedFo
     const nativeFiltered = hasActiveNativeFilters();
 
     // Case 1: Native search / tag filter at root -> keep SillyTavern's filtered results, add matching folders + badges.
+    // Text search surfaces matching foldered cards with folder badges; tag/favorite filters without text search still
+    // hide foldered cards in root when `hideFolderedCharsInRoot` is enabled.
     // Inside a folder (`activeCharFolderId !== null`), Case 3 always runs so only items inside that folder appear.
     if (nativeFiltered && !activeCharFolderId) {
         withSuppressedCharObserver(() => {
@@ -903,11 +932,7 @@ export function renderCharacterFolderView({ fromNativePageLoad = false, pinnedFo
 
             const searchTerm = String(document.getElementById('character_search_bar')?.value || '').trim().toLowerCase();
             const visibleCards = [...listBlock.querySelectorAll(':scope > .character_select, :scope > .group_select')];
-            for (const card of visibleCards) {
-                if (!(card instanceof HTMLElement)) continue;
-                setElementFolderHidden(card, false);
-                decorateEntityCard(card, { showBadge: true });
-            }
+            applyRootCardsFolderVisibility(visibleCards, settings, { forceShowAll: searchTerm.length > 0 });
 
             // Show folders matching search query, or root folders when only tag/fav filters are active
             const foldersToRender = searchTerm
@@ -955,19 +980,7 @@ export function renderCharacterFolderView({ fromNativePageLoad = false, pinnedFo
             }
 
             const cards = [...listBlock.querySelectorAll(':scope > .character_select, :scope > .group_select')];
-            for (const card of cards) {
-                if (!(card instanceof HTMLElement)) continue;
-                const info = getEntityInfoFromElement(card);
-                const assignedId = info ? settings.charAssignments[info.key] : null;
-                const hasValidFolder = Boolean(assignedId && settings.charFolders.some(f => f.id === assignedId));
-
-                if (settings.hideFolderedCharsInRoot && hasValidFolder) {
-                    setElementFolderHidden(card, true);
-                } else {
-                    setElementFolderHidden(card, false);
-                    decorateEntityCard(card, { showBadge: !settings.hideFolderedCharsInRoot });
-                }
-            }
+            applyRootCardsFolderVisibility(cards, settings, { forceShowAll: false });
         });
 
         updateCharToolbar({ showCustomPager: false });
@@ -1126,6 +1139,7 @@ function ensureCharToolbarMounted() {
             settings.hideFolderedCharsInRoot = !settings.hideFolderedCharsInRoot;
             saveSettings();
             charCustomPage = 1;
+            globalThis.toastr?.info?.(tr(settings.hideFolderedCharsInRoot ? 'hideCharsActiveHint' : 'hideCharsInactiveHint'));
             notifyAllControllers();
         });
 
@@ -1147,7 +1161,7 @@ function ensureCharToolbarMounted() {
             const visibleCards = listBlock.querySelectorAll(':scope > .character_select, :scope > .group_select');
             const keys = [];
             for (const card of visibleCards) {
-                if (!(card instanceof HTMLElement) || card.style.display === 'none') continue;
+                if (!(card instanceof HTMLElement) || card.style.display === 'none' || card.classList.contains('stf-hidden-by-folder')) continue;
                 const info = getEntityInfoFromElement(card);
                 if (info) keys.push(info.key);
             }

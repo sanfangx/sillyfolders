@@ -268,8 +268,8 @@ function updateChatToolbar(scopeKey, folders = []) {
     }
 
     if (chatHideToggleBtn) {
-        chatHideToggleBtn.title = tr('toggleHideFolderedChats');
-        chatHideToggleBtn.classList.toggle('active', !settings.hideFolderedChatsInRoot);
+        chatHideToggleBtn.title = tr(settings.hideFolderedChatsInRoot ? 'hideChatsActiveHint' : 'hideChatsInactiveHint');
+        chatHideToggleBtn.classList.toggle('active', settings.hideFolderedChatsInRoot);
         const icon = chatHideToggleBtn.querySelector('i');
         if (icon) {
             icon.className = settings.hideFolderedChatsInRoot ? 'fa-solid fa-eye-slash' : 'fa-solid fa-eye';
@@ -349,11 +349,12 @@ async function openChatMovePicker(scopeKey, chatKeys, singleName = '') {
 
     if (!picked) return;
 
-    assignItemsToFolder(folders, assignments, chatKeys, picked.targetFolderId);
+    const latestScope = ensureChatScope(getSettings(), scopeKey);
+    assignItemsToFolder(latestScope.folders, latestScope.assignments, chatKeys, picked.targetFolderId);
     saveSettings();
 
     if (picked.targetFolderId) {
-        const target = folders.find(f => f.id === picked.targetFolderId);
+        const target = latestScope.folders.find(f => f.id === picked.targetFolderId);
         globalThis.toastr?.success?.(tr('movedToFolder', { name: target?.name || '' }));
     } else {
         globalThis.toastr?.success?.(tr('movedToRoot'));
@@ -709,6 +710,7 @@ function ensureChatToolbarMounted() {
             const settings = getSettings();
             settings.hideFolderedChatsInRoot = !settings.hideFolderedChatsInRoot;
             saveSettings();
+            globalThis.toastr?.info?.(tr(settings.hideFolderedChatsInRoot ? 'hideChatsActiveHint' : 'hideChatsInactiveHint'));
             renderChatFolderView();
         });
 
@@ -730,7 +732,7 @@ function ensureChatToolbarMounted() {
             const wrappers = selectChatDiv.querySelectorAll(':scope > .select_chat_block_wrapper');
             const visibleKeys = [];
             for (const w of wrappers) {
-                if (!(w instanceof HTMLElement) || w.style.display === 'none') continue;
+                if (!(w instanceof HTMLElement) || w.style.display === 'none' || w.classList.contains('stf-hidden-by-folder')) continue;
                 const k = getChatKeyFromWrapper(w);
                 if (k) visibleKeys.push(k);
             }

@@ -117,6 +117,7 @@ class MiniNode {
         this.dataset = {};
         this.style = {
             setProperty: (k, v) => { this.style[k] = v; },
+            removeProperty: (k) => { delete this.style[k]; },
         };
         this._className = '';
         this.classList = new MiniClassList(this);
@@ -982,16 +983,28 @@ test('full DOM workflow: character folders and chat folders end-to-end', async (
     assert.equal(cardsInsideTarget[0].querySelector('.ch_name').textContent, 'Alice');
     assert.equal(cardsInsideTarget[0].classList.contains('stf-hidden-by-folder'), false);
 
-    // 17. Regression: even when a REAL tag filter (non-actionable `.tag.selected`) or search query is active,
-    // clicking into a folder STILL isolates view to only that folder's items, and going back restores root filter.
+    // 17. Regression: even when a REAL tag filter (non-actionable `.tag.selected`) or `.filterByFavorites.selected`
+    // is active without a text search query, foldered cards STILL stay hidden at root when `hideFolderedCharsInRoot` is enabled,
+    // clicking into a folder still isolates to that folder's items, and text search surfaces matching foldered cards with badges.
     env.doc.getElementById('stf_char_toolbar').querySelector('.stf-crumb').click();
     const realTagFilter = new MiniNode(1, 'span');
     realTagFilter.classList.add('tag', 'selected');
     tagFilterEl.appendChild(realTagFilter);
     env.renderNativeCharPage();
 
-    // At root under real tag filter: SillyTavern filtered list stays visible
-    assert.equal(env.listBlock.querySelectorAll(':scope > .character_select, :scope > .group_select').length, 3);
+    // At root under tag filter (empty search bar): Alice stays hidden at root while Bob & Adventure Party show
+    assert.equal(env.doc.getElementById('CharID0').style.display, 'none');
+    assert.equal(env.doc.getElementById('CharID0').classList.contains('stf-hidden-by-folder'), true);
+    assert.equal(env.doc.getElementById('CharID0').hidden, true);
+    assert.notEqual(env.doc.getElementById('CharID1').style.display, 'none');
+
+    // Text search at root surfaces Alice with a folder badge
+    charSearchInput.value = 'Alice';
+    env.renderNativeCharPage();
+    assert.notEqual(env.doc.getElementById('CharID0').style.display, 'none');
+    assert.ok(env.doc.getElementById('CharID0').querySelector('.stf-folder-badge'));
+    charSearchInput.value = '';
+    env.renderNativeCharPage();
 
     // Enter targetFolder -> ONLY Alice renders
     env.listBlock
@@ -1001,8 +1014,18 @@ test('full DOM workflow: character folders and chat folders end-to-end', async (
     assert.equal(env.listBlock.querySelectorAll(':scope > .character_select, :scope > .group_select').length, 1);
     assert.equal(env.listBlock.querySelector('.ch_name').textContent, 'Alice');
 
-    // Return to root -> native filtered list restored cleanly
+    // Return to root -> Alice is hidden again under tag filter without search query
     env.doc.getElementById('stf_char_toolbar').querySelector('.stf-crumb').click();
-    assert.equal(env.listBlock.querySelectorAll(':scope > .character_select, :scope > .group_select').length, 3);
+    assert.equal(env.doc.getElementById('CharID0').style.display, 'none');
+    assert.equal(env.doc.getElementById('CharID0').classList.contains('stf-hidden-by-folder'), true);
     realTagFilter.remove();
+
+    // Also verify actionable `.filterByFavorites.selected` without text search keeps Alice hidden in root
+    const favFilter = new MiniNode(1, 'span');
+    favFilter.classList.add('tag', 'actionable', 'filterByFavorites', 'selected');
+    tagFilterEl.appendChild(favFilter);
+    env.renderNativeCharPage();
+    assert.equal(env.doc.getElementById('CharID0').style.display, 'none');
+    assert.equal(env.doc.getElementById('CharID0').classList.contains('stf-hidden-by-folder'), true);
+    favFilter.remove();
 });

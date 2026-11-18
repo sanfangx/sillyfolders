@@ -674,11 +674,22 @@ export function buildFolderCard({
  */
 export function setElementFolderHidden(el, hidden) {
     if (hidden) {
-        el.style.display = 'none';
+        if (typeof el.style?.setProperty === 'function') {
+            el.style.setProperty('display', 'none', 'important');
+        } else if (el.style) {
+            el.style.display = 'none';
+        }
+        el.hidden = true;
         el.classList.add('stf-hidden-by-folder');
         el.dataset.stfHiddenByFolder = '1';
     } else if (el.dataset.stfHiddenByFolder === '1' || el.classList.contains('stf-hidden-by-folder')) {
-        el.style.display = '';
+        if (typeof el.style?.removeProperty === 'function') {
+            el.style.removeProperty('display');
+        }
+        if (el.style) {
+            el.style.display = '';
+        }
+        el.hidden = false;
         el.classList.remove('stf-hidden-by-folder');
         delete el.dataset.stfHiddenByFolder;
     }
