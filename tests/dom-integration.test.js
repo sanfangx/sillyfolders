@@ -941,4 +941,68 @@ test('full DOM workflow: character folders and chat folders end-to-end', async (
     assert.match(cssText, /\.stf-folder-card\s*\{[^}]*min-height:\s*\d+px/s);
     assert.match(cssText, /\.stf-folder-avatar\s*\{[^}]*flex-shrink:\s*0/s);
     assert.match(cssText, /\.stf-toolbar\s*\{[^}]*flex-shrink:\s*0/s);
+    assert.match(cssText, /\.stf-hidden-by-folder\s*\{[^}]*display:\s*none\s*!important/s);
+
+    // 16. Regression: SillyTavern's `.tag.actionable.showTagList.selected` UI toggle must NOT
+    // trigger native-filter mode; moving a card into a folder hides it from root AND opening that
+    // folder renders ONLY the card(s) inside that folder (never all cards).
+    const showTagListBtn = new MiniNode(1, 'span');
+    showTagListBtn.classList.add('tag', 'actionable', 'showTagList', 'selected');
+    tagFilterEl.appendChild(showTagListBtn);
+    env.renderNativeCharPage();
+
+    const targetFolder = env.state.extensionSettings.st_folders.charFolders.find(f => f.name === '根目录新文件夹');
+    assert.ok(targetFolder);
+
+    // Move Alice (CharID0) into targetFolder while `.showTagList.selected` is present
+    env.popupQueue.push((popup) => {
+        const btns = popup.content.querySelectorAll('.stf-picker-item:not(.stf-picker-root)');
+        const matchBtn = btns.find(b => b.querySelector('.stf-picker-item-name')?.textContent === '根目录新文件夹');
+        matchBtn.click();
+    });
+    const aliceMoveBtn = env.doc.getElementById('CharID0').querySelector('.stf-char-move-btn');
+    await aliceMoveBtn.click();
+    await new Promise(r => setTimeout(r, 20));
+
+    // At root: Alice must be hidden (not shown in root alongside uncategorized cards)
+    const aliceAtRoot = env.doc.getElementById('CharID0');
+    const bobAtRoot = env.doc.getElementById('CharID1');
+    assert.equal(aliceAtRoot.style.display, 'none');
+    assert.equal(aliceAtRoot.classList.contains('stf-hidden-by-folder'), true);
+    assert.notEqual(bobAtRoot.style.display, 'none');
+
+    // Open targetFolder -> ONLY Alice renders inside targetFolder (1 card total, NOT Bob or Adventure Party)
+    const targetFolderCard = env.listBlock
+        .querySelectorAll('.stf-folder-card-char')
+        .find(el => el.dataset.folderId === targetFolder.id);
+    targetFolderCard.click();
+
+    const cardsInsideTarget = env.listBlock.querySelectorAll(':scope > .character_select, :scope > .group_select');
+    assert.equal(cardsInsideTarget.length, 1);
+    assert.equal(cardsInsideTarget[0].querySelector('.ch_name').textContent, 'Alice');
+    assert.equal(cardsInsideTarget[0].classList.contains('stf-hidden-by-folder'), false);
+
+    // 17. Regression: even when a REAL tag filter (non-actionable `.tag.selected`) or search query is active,
+    // clicking into a folder STILL isolates view to only that folder's items, and going back restores root filter.
+    env.doc.getElementById('stf_char_toolbar').querySelector('.stf-crumb').click();
+    const realTagFilter = new MiniNode(1, 'span');
+    realTagFilter.classList.add('tag', 'selected');
+    tagFilterEl.appendChild(realTagFilter);
+    env.renderNativeCharPage();
+
+    // At root under real tag filter: SillyTavern filtered list stays visible
+    assert.equal(env.listBlock.querySelectorAll(':scope > .character_select, :scope > .group_select').length, 3);
+
+    // Enter targetFolder -> ONLY Alice renders
+    env.listBlock
+        .querySelectorAll('.stf-folder-card-char')
+        .find(el => el.dataset.folderId === targetFolder.id)
+        .click();
+    assert.equal(env.listBlock.querySelectorAll(':scope > .character_select, :scope > .group_select').length, 1);
+    assert.equal(env.listBlock.querySelector('.ch_name').textContent, 'Alice');
+
+    // Return to root -> native filtered list restored cleanly
+    env.doc.getElementById('stf_char_toolbar').querySelector('.stf-crumb').click();
+    assert.equal(env.listBlock.querySelectorAll(':scope > .character_select, :scope > .group_select').length, 3);
+    realTagFilter.remove();
 });

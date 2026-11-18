@@ -667,6 +667,24 @@ export function buildFolderCard({
 }
 
 /**
+ * Shows or hides a character/group/chat card element when filtered out of root by folder rules.
+ * Uses both inline `display` and the `.stf-hidden-by-folder` CSS class so theme styles cannot override it.
+ * @param {HTMLElement} el
+ * @param {boolean} hidden
+ */
+export function setElementFolderHidden(el, hidden) {
+    if (hidden) {
+        el.style.display = 'none';
+        el.classList.add('stf-hidden-by-folder');
+        el.dataset.stfHiddenByFolder = '1';
+    } else if (el.dataset.stfHiddenByFolder === '1' || el.classList.contains('stf-hidden-by-folder')) {
+        el.style.display = '';
+        el.classList.remove('stf-hidden-by-folder');
+        delete el.dataset.stfHiddenByFolder;
+    }
+}
+
+/**
  * Scrolls the list container to the top and highlights a newly created folder card so it is immediately visible.
  * @param {HTMLElement|null} container
  * @param {string} folderId

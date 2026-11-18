@@ -1,5 +1,9 @@
 /* SillyTavern Folders Extension Styles */
 
+.stf-hidden-by-folder {
+    display: none !important;
+}
+
 .stf-toolbar {
     display: flex;
     flex-direction: column;

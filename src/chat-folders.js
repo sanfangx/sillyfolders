@@ -30,6 +30,7 @@ import {
     renderBreadcrumbs,
     revealFolderCard,
     setActiveDragPayload,
+    setElementFolderHidden,
 } from './ui-dialogs.js';
 
 /** @type {Map<string, string|null>} */
@@ -498,10 +499,7 @@ function clearChatDecorations(selectChatDiv) {
         selectChatDiv.querySelectorAll('.stf-folder-card, .stf-empty-folder-hint').forEach(el => el.remove());
         selectChatDiv.querySelectorAll('.select_chat_block_wrapper').forEach((wrapper) => {
             if (!(wrapper instanceof HTMLElement)) return;
-            if (wrapper.dataset.stfHiddenByFolder === '1') {
-                wrapper.style.display = '';
-                delete wrapper.dataset.stfHiddenByFolder;
-            }
+            setElementFolderHidden(wrapper, false);
             wrapper.classList.remove('stf-batch-selected', 'stf-chat-decorated');
             wrapper.querySelector('.stf-folder-badge')?.remove();
             wrapper.querySelector('.stf-chat-move-btn')?.remove();
@@ -615,15 +613,11 @@ export function renderChatFolderView({ pinnedFolderId = null } = {}) {
             }
 
             if (shouldShow) {
-                if (wrapper.dataset.stfHiddenByFolder === '1') {
-                    wrapper.style.display = '';
-                    delete wrapper.dataset.stfHiddenByFolder;
-                }
+                setElementFolderHidden(wrapper, false);
                 decorateChatWrapper(wrapper, scope, showBadge);
                 visibleWrappersCount++;
             } else {
-                wrapper.style.display = 'none';
-                wrapper.dataset.stfHiddenByFolder = '1';
+                setElementFolderHidden(wrapper, true);
             }
         }
 
