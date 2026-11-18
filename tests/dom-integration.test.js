@@ -1182,4 +1182,82 @@ test('full DOM workflow: character folders and chat folders end-to-end', async (
         env.state.extensionSettings.st_folders.recentAssignments['char:bob.png::Bob - New Chapter'],
         recentFolderId,
     );
+
+    // 19. Recent Chats collapse limit (`recentChatsSettings.collapsedDisplayed`) survives pre-expanded refreshes (`expand = true`)
+    env.doc.getElementById('stf_recent_chat_toolbar').querySelector('.stf-crumb').click();
+    env.state.accountStorage.getItem = (key) => (
+        key === 'recentChatsSettings'
+            ? JSON.stringify({ maxDisplayed: 15, collapsedDisplayed: 2 })
+            : '50'
+    );
+    const expandedMixedPanel = env.renderWelcomePanel([
+        { avatar: 'alice.png', charName: 'Alice', file: 'Alice - Chat 1' }, // assigned to recentFolderId
+        { group: 'grp_1', charName: 'Adventure Party', file: 'Group Chat 1' }, // assigned to recentFolderId
+        { avatar: 'alice.png', charName: 'Alice', file: 'Alice - Chat 2' },
+        { avatar: 'bob.png', charName: 'Bob', file: 'Bob - Chat 2' },
+        { avatar: 'alice.png', charName: 'Alice', file: 'Alice - Chat 3' },
+        { group: 'grp_1', charName: 'Adventure Party', file: 'Group Chat 2' },
+    ], 2);
+    const mixedList = expandedMixedPanel.querySelector('.recentChatList');
+    const mixedShowMore = mixedList.querySelector('button.showMoreChats');
+    // Simulate SillyTavern's `sendWelcomePanel(chats, true)` synchronous click before MutationObserver microtask
+    mixedShowMore.click();
+    await new Promise(r => setTimeout(r, 20));
+
+    const getVisibleRootChats = (listEl) => listEl
+        .querySelectorAll('.recentChat')
+        .filter((c) => !c.classList.contains('stf-hidden-by-folder') && !c.classList.contains('hidden'));
+
+    // While expanded, all 4 unfoldered chats remain visible
+    assert.equal(mixedShowMore.classList.contains('rotated'), true);
+    assert.equal(getVisibleRootChats(mixedList).length, 4);
+
+    // Collapse back down -> strictly 2 unfoldered chats remain visible, other 2 carry `.hidden` + `.stf-collapsed-extra`
+    mixedShowMore.click();
+    await new Promise(r => setTimeout(r, 20));
+    assert.equal(mixedShowMore.classList.contains('rotated'), false);
+    assert.equal(mixedShowMore.classList.contains('stf-hidden-by-folder'), false);
+    assert.equal(getVisibleRootChats(mixedList).length, 2);
+    assert.deepEqual(
+        getVisibleRootChats(mixedList).map((c) => c.dataset.file),
+        ['Alice - Chat 2', 'Bob - Chat 2'],
+    );
+    const collapsedExtras = mixedList
+        .querySelectorAll('.recentChat')
+        .filter((c) => !c.classList.contains('stf-hidden-by-folder') && c.classList.contains('hidden'));
+    assert.equal(collapsedExtras.length, 2);
+    assert.equal(collapsedExtras.every((c) => c.classList.contains('stf-collapsed-extra')), true);
+
+    // 20. Fresh profile (`accountStorage.getItem = () => null`) + pre-expanded refresh falls back to default 3 visible chats when collapsed
+    env.state.accountStorage.getItem = () => null;
+    const defaultPanel = env.renderWelcomePanel([
+        { avatar: 'alice.png', charName: 'Alice', file: 'Alice - Chat 2' },
+        { avatar: 'bob.png', charName: 'Bob', file: 'Bob - Chat 2' },
+        { avatar: 'alice.png', charName: 'Alice', file: 'Alice - Chat 3' },
+        { avatar: 'bob.png', charName: 'Bob', file: 'Bob - Chat 3' },
+        { group: 'grp_1', charName: 'Adventure Party', file: 'Group Chat 2' },
+    ], 3);
+    const defaultList = defaultPanel.querySelector('.recentChatList');
+    const defaultShowMore = defaultList.querySelector('button.showMoreChats');
+    defaultShowMore.click();
+    await new Promise(r => setTimeout(r, 20));
+    assert.equal(getVisibleRootChats(defaultList).length, 5);
+
+    defaultShowMore.click();
+    await new Promise(r => setTimeout(r, 20));
+    assert.equal(getVisibleRootChats(defaultList).length, 3);
+    assert.equal(
+        defaultList.querySelectorAll('.recentChat.hidden.stf-collapsed-extra').length,
+        2,
+    );
+
+    // Disabling extension keeps collapsed `.hidden` state clean without `.stf-collapsed-extra`
+    enabledCheck.checked = false;
+    enabledCheck.dispatchEvent(createDomEvent('change', enabledCheck));
+    assert.equal(defaultList.querySelectorAll('.recentChat.hidden').length, 2);
+    assert.equal(defaultList.querySelectorAll('.recentChat.stf-collapsed-extra').length, 0);
+    assert.equal(defaultShowMore.classList.contains('stf-hidden-by-folder'), false);
+
+    enabledCheck.checked = true;
+    enabledCheck.dispatchEvent(createDomEvent('change', enabledCheck));
 });

@@ -426,16 +426,63 @@ function decorateRecentChatCard(cardEl, settings, showBadge) {
     }
 }
 
+const DEFAULT_RECENT_COLLAPSED_COUNT = 3;
+
+/**
+ * Resolves SillyTavern's configured collapsed chat limit (`recentChatsSettings.collapsedDisplayed`)
+ * without being fooled when a panel is rendered pre-expanded (`expand = true`).
+ * @param {HTMLElement} welcomeRecent
+ * @param {HTMLElement[]} recentCards
+ * @param {boolean} isExpanded
+ * @returns {number}
+ */
+function resolveRecentCollapsedLimit(welcomeRecent, recentCards, isExpanded) {
+    const context = getStContext();
+    try {
+        const raw = context?.accountStorage?.getItem?.('recentChatsSettings');
+        if (raw) {
+            const parsed = JSON.parse(raw);
+            const configured = parseInt(parsed?.collapsedDisplayed, 10);
+            if (Number.isFinite(configured) && configured >= 1) {
+                welcomeRecent.dataset.stfCollapsedLimit = String(configured);
+                return configured;
+            }
+        }
+    } catch {
+        // Ignore malformed storage entry and fall back to DOM inspection
+    }
+
+    const cached = Number(welcomeRecent.dataset.stfCollapsedLimit);
+    if (Number.isFinite(cached) && cached >= 1) {
+        return cached;
+    }
+
+    if (!isExpanded && recentCards.length > 0) {
+        const origVisibleCount = recentCards.filter(card => card.dataset.stfOrigHidden === '0').length;
+        if (origVisibleCount > 0) {
+            welcomeRecent.dataset.stfCollapsedLimit = String(origVisibleCount);
+            return origVisibleCount;
+        }
+    }
+
+    return DEFAULT_RECENT_COLLAPSED_COUNT;
+}
+
 /**
  * Removes folder decorations from `.recentChatList` when extension is disabled.
  * @param {HTMLElement} recentChatList
  */
 function clearRecentDecorations(recentChatList) {
     withSuppressedRecentObserver(() => {
+        const showMoreBtn = recentChatList.querySelector(':scope > button.showMoreChats');
+        const isExpanded = Boolean(showMoreBtn?.classList.contains('rotated'));
         recentChatList.querySelectorAll('.stf-folder-card, .stf-empty-folder-hint').forEach(el => el.remove());
         recentChatList.querySelectorAll(':scope > .recentChat').forEach((card) => {
             if (!(card instanceof HTMLElement)) return;
             setElementFolderHidden(card, false);
+            if (!isExpanded && card.dataset.stfOrigHidden !== undefined) {
+                card.classList.toggle('hidden', card.dataset.stfOrigHidden === '1');
+            }
             card.classList.remove(
                 'stf-force-show-recent',
                 'stf-collapsed-extra',
@@ -446,7 +493,6 @@ function clearRecentDecorations(recentChatList) {
             card.querySelector('.stf-recent-move-btn')?.remove();
             card.removeAttribute('draggable');
         });
-        const showMoreBtn = recentChatList.querySelector(':scope > button.showMoreChats');
         if (showMoreBtn instanceof HTMLElement) setElementFolderHidden(showMoreBtn, false);
         const noRecentEl = recentChatList.querySelector(':scope > .noRecentChat');
         if (noRecentEl instanceof HTMLElement) setElementFolderHidden(noRecentEl, false);
@@ -597,7 +643,7 @@ export function renderRecentChatFolderView() {
     const containers = ensureRecentToolbarMounted();
     if (!containers) return;
 
-    const { recentChatList } = containers;
+    const { welcomeRecent, recentChatList } = containers;
     const settings = getSettings();
 
     if (!settings.enabled) {
@@ -614,21 +660,17 @@ export function renderRecentChatFolderView() {
         el => el instanceof HTMLElement,
     );
 
-    // Record SillyTavern's original collapsed/unhidden count once per panel render
-    let origVisibleCount = 0;
-    for (const card of recentCards) {
-        if (card.dataset.stfOrigHidden === undefined) {
-            card.dataset.stfOrigHidden = card.classList.contains('hidden') ? '1' : '0';
-        }
-        if (card.dataset.stfOrigHidden === '0') {
-            origVisibleCount++;
-        }
-    }
-    const collapsedLimit = origVisibleCount > 0 ? origVisibleCount : 3;
-
     const showMoreBtn = recentChatList.querySelector(':scope > button.showMoreChats');
     const noRecentEl = recentChatList.querySelector(':scope > .noRecentChat');
     const isExpanded = Boolean(showMoreBtn?.classList.contains('rotated'));
+
+    // Only snapshot `.hidden` on initial unexpanded state so pre-expanded refreshes don't inflate the limit
+    for (const card of recentCards) {
+        if (card.dataset.stfOrigHidden === undefined && !isExpanded) {
+            card.dataset.stfOrigHidden = card.classList.contains('hidden') ? '1' : '0';
+        }
+    }
+    const collapsedLimit = resolveRecentCollapsedLimit(welcomeRecent, recentCards, isExpanded);
 
     const statsMap = computeFolderStats(settings.recentFolders, settings.recentAssignments);
     const validFolderIds = new Set(settings.recentFolders.map(f => f.id));
@@ -672,8 +714,8 @@ export function renderRecentChatFolderView() {
             if (activeRecentFolderId) {
                 if (effectiveFolder === activeRecentFolderId) {
                     setElementFolderHidden(card, false);
+                    card.classList.remove('hidden', 'stf-collapsed-extra');
                     card.classList.add('stf-force-show-recent');
-                    card.classList.remove('stf-collapsed-extra');
                     decorateRecentChatCard(card, settings, false);
                     visibleCardsCount++;
                 } else {
@@ -686,12 +728,12 @@ export function renderRecentChatFolderView() {
             } else {
                 setElementFolderHidden(card, false);
                 if (isExpanded || visibleCardsCount < collapsedLimit) {
+                    card.classList.remove('hidden', 'stf-collapsed-extra');
                     card.classList.add('stf-force-show-recent');
-                    card.classList.remove('stf-collapsed-extra');
                     visibleCardsCount++;
                 } else {
                     card.classList.remove('stf-force-show-recent');
-                    card.classList.add('stf-collapsed-extra');
+                    card.classList.add('hidden', 'stf-collapsed-extra');
                     collapsedRemainingCount++;
                 }
                 decorateRecentChatCard(card, settings, showBadge);
