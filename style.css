@@ -9,6 +9,7 @@
     border-radius: 8px;
     border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.16));
     background-color: var(--black30a, rgba(0, 0, 0, 0.25));
+    flex-shrink: 0;
 }
 
 .stf-chat-toolbar {
@@ -162,8 +163,25 @@
     position: relative;
     transition: background-color 0.15s ease, border-color 0.15s ease, transform 0.12s ease;
     width: 100%;
+    min-height: 54px;
+    flex-shrink: 0;
     box-sizing: border-box;
     border-left: 3px solid var(--stf-folder-accent, var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.25)));
+}
+
+@keyframes stf-folder-flash {
+    0% {
+        box-shadow: 0 0 0 2px var(--SmartThemeQuoteColor, #4f86f7);
+        background-color: var(--white30a, rgba(255, 255, 255, 0.22));
+    }
+    100% {
+        box-shadow: none;
+        background-color: var(--black30a, rgba(0, 0, 0, 0.2));
+    }
+}
+
+.stf-folder-card.stf-just-created {
+    animation: stf-folder-flash 1.4s ease-out 1;
 }
 
 .stf-folder-card:hover {
@@ -175,6 +193,7 @@
     margin-top: 5px;
     margin-bottom: 0;
     padding: 6px 8px;
+    min-height: 44px;
 }
 
 .stf-folder-avatar {
@@ -182,6 +201,7 @@
     width: var(--avatar-base-width, 50px);
     height: var(--avatar-base-height, 50px);
     min-width: var(--avatar-base-width, 50px);
+    flex-shrink: 0;
     border-radius: var(--avatar-base-border-radius, 8px);
     border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.2));
     background-color: var(--SmartThemeBlurTintColor, rgba(255, 255, 255, 0.08));
@@ -294,6 +314,9 @@ body.charListGrid #rm_print_characters_block .stf-folder-card-char {
     width: 30%;
     max-width: 100px;
     height: min-content;
+    min-height: var(--avatar-base-height, 50px);
+    flex: 0 0 auto;
+    overflow: hidden;
     flex-direction: column;
     align-items: center;
     padding: 5px;
@@ -304,11 +327,13 @@ body.charListGrid #rm_print_characters_block .stf-folder-card-char {
 
 body.charListGrid #rm_print_characters_block .stf-folder-card-char .stf-folder-meta {
     width: 100%;
+    flex: 0 0 auto;
     align-items: center;
 }
 
 body.charListGrid #rm_print_characters_block .stf-folder-card-char .stf-folder-title-row {
     width: 100%;
+    flex: 0 0 auto;
     flex-direction: column;
     align-items: center;
     gap: 1px;
@@ -316,6 +341,7 @@ body.charListGrid #rm_print_characters_block .stf-folder-card-char .stf-folder-t
 
 body.charListGrid #rm_print_characters_block .stf-folder-card-char .stf-folder-name {
     width: 100%;
+    flex: 0 0 auto;
     text-align: center;
     font-size: calc(var(--mainFontSize, 14px) * 0.8);
 }

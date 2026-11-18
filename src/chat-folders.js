@@ -28,6 +28,7 @@ import {
     openFolderFormPopup,
     openFolderPickerPopup,
     renderBreadcrumbs,
+    revealFolderCard,
     setActiveDragPayload,
 } from './ui-dialogs.js';
 
@@ -112,6 +113,7 @@ function withSuppressedChatObserver(fn) {
     try {
         fn();
     } finally {
+        chatObserver?.takeRecords?.();
         isApplyingChatDom = false;
     }
 }
@@ -303,6 +305,8 @@ function navigateToChatFolder(scopeKey, folderId) {
     }
     selectedChatKeys.clear();
     renderChatFolderView();
+    const selectChatDiv = document.getElementById('select_chat_div');
+    if (selectChatDiv) selectChatDiv.scrollTop = 0;
 }
 
 /**
@@ -394,10 +398,14 @@ async function handleCreateChatFolder() {
     });
     if (!form) return;
 
-    const created = createFolder(folders, form);
+    const latestScope = ensureChatScope(getSettings(), scopeKey);
+    const created = createFolder(latestScope.folders, form);
     saveSettings();
     globalThis.toastr?.success?.(tr('folderCreated', { name: created.name }));
-    renderChatFolderView();
+
+    activeChatFolderByScope.set(scopeKey, created.parentId || null);
+    renderChatFolderView({ pinnedFolderId: created.id });
+    revealFolderCard(document.getElementById('select_chat_div'), created.id);
 }
 
 /**
@@ -504,8 +512,9 @@ function clearChatDecorations(selectChatDiv) {
 
 /**
  * Applies folder UI inside `#select_chat_div`.
+ * @param {{ pinnedFolderId?: string|null }} [options]
  */
-export function renderChatFolderView() {
+export function renderChatFolderView({ pinnedFolderId = null } = {}) {
     const selectChatDiv = document.getElementById('select_chat_div');
     if (!selectChatDiv) return;
 
@@ -563,6 +572,7 @@ export function renderChatFolderView() {
         const activeDescendants = activeFolderId ? getDescendantIds(folders, activeFolderId) : null;
         const foldersToShow = searchQuery
             ? sortFolders(folders).filter((f) => {
+                if (pinnedFolderId && f.id === pinnedFolderId) return true;
                 if (!f.name.toLowerCase().includes(searchQuery)) return false;
                 if (!activeFolderId) return true;
                 return activeDescendants.has(f.id) && f.id !== activeFolderId;

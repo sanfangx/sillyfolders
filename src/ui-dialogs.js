@@ -665,3 +665,21 @@ export function buildFolderCard({
 
     return card;
 }
+
+/**
+ * Scrolls the list container to the top and highlights a newly created folder card so it is immediately visible.
+ * @param {HTMLElement|null} container
+ * @param {string} folderId
+ */
+export function revealFolderCard(container, folderId) {
+    if (!container) return;
+    container.scrollTop = 0;
+    const cards = container.querySelectorAll('.stf-folder-card');
+    for (const card of cards) {
+        if (card instanceof HTMLElement && card.dataset?.folderId === folderId) {
+            card.classList.add('stf-just-created');
+            card.scrollIntoView?.({ block: 'nearest' });
+            break;
+        }
+    }
+}

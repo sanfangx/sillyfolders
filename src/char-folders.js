@@ -28,6 +28,7 @@ import {
     openFolderFormPopup,
     openFolderPickerPopup,
     renderBreadcrumbs,
+    revealFolderCard,
     setActiveDragPayload,
 } from './ui-dialogs.js';
 
@@ -51,6 +52,41 @@ let batchBtn = null;
 let newFolderBtn = null;
 let backBtn = null;
 let nativeBulkMoveBtn = null;
+
+let isApplyingCharDom = false;
+let charObserver = null;
+let charRenderSeq = 0;
+
+/**
+ * Runs DOM mutations inside `#rm_print_characters_block` without re-triggering the recovery observer.
+ * @param {() => void} fn
+ */
+function withSuppressedCharObserver(fn) {
+    isApplyingCharDom = true;
+    try {
+        fn();
+    } finally {
+        charObserver?.takeRecords?.();
+        isApplyingCharDom = false;
+    }
+}
+
+/**
+ * Schedules a coalesced recovery render if `#rm_print_characters_block` is mutated externally
+ * without a subsequent `CHARACTER_PAGE_LOADED` event in the same synchronous turn.
+ */
+function scheduleCharRecoveryRender() {
+    const expectedSeq = charRenderSeq;
+    queueMicrotask(() => {
+        if (expectedSeq !== charRenderSeq) return;
+        const listBlock = document.getElementById('rm_print_characters_block');
+        if (!listBlock) return;
+        const hasUndecoratedNative = Boolean(
+            listBlock.querySelector(':scope > .character_select:not(.stf-entity-decorated), :scope > .group_select:not(.stf-entity-decorated)'),
+        );
+        renderCharacterFolderView({ fromNativePageLoad: hasUndecoratedNative });
+    });
+}
 
 /**
  * Checks whether SillyTavern's character search or tag/bogus filters are currently active.
@@ -90,8 +126,10 @@ function getEntityInfoFromElement(el) {
     if (!context) return null;
 
     if (el.classList.contains('character_select')) {
-        const chid = Number(el.getAttribute('data-chid'));
-        const char = context.characters?.[chid];
+        const rawChid = el.getAttribute('data-chid') ?? el.getAttribute('chid');
+        if (rawChid === null || rawChid === '') return null;
+        const chid = Number(rawChid);
+        const char = Number.isInteger(chid) ? context.characters?.[chid] : null;
         if (!char?.avatar) return null;
         return {
             key: makeCharKey(char.avatar),
@@ -101,7 +139,7 @@ function getEntityInfoFromElement(el) {
     }
 
     if (el.classList.contains('group_select')) {
-        const grid = el.getAttribute('data-grid') || globalThis.jQuery?.(el).data('id');
+        const grid = el.getAttribute('data-grid') || el.getAttribute('grid') || globalThis.jQuery?.(el).data('id');
         const group = context.groups?.find(g => g.id === grid);
         if (!group?.id) return null;
         return {
@@ -166,7 +204,7 @@ function populateInlineTags(tagsContainer, entityKeyOrAvatar) {
     const allTags = context.tags || [];
 
     for (const tagId of tagIds) {
-        const tagObj = allTags.find(t => t.id === tagId);
+        const tagObj = allTags.find(t => t?.id === tagId);
         if (!tagObj || tagObj.is_hidden_on_character_card) continue;
 
         let tagEl;
@@ -255,7 +293,7 @@ function buildCharacterCardElement(item, id) {
 
     const descEl = node.querySelector('.ch_description');
     if (descEl instanceof HTMLElement) {
-        const desc = item.data?.creator_notes || '';
+        const desc = String(item.data?.creator_notes || '');
         if (desc) {
             descEl.textContent = desc;
             descEl.style.display = '';
@@ -342,7 +380,7 @@ function buildGroupCardElement(group) {
     // Build group avatar
     const existingAvatar = node.querySelector('.avatar');
     if (existingAvatar) {
-        if (group.avatar_url && (group.avatar_url.startsWith('data:') || group.avatar_url.startsWith('user') || group.avatar_url.startsWith('/user'))) {
+        if (typeof group.avatar_url === 'string' && group.avatar_url && (group.avatar_url.startsWith('data:') || group.avatar_url.startsWith('user') || group.avatar_url.startsWith('/user'))) {
             const img = existingAvatar.querySelector('img');
             if (img) img.src = group.avatar_url;
             existingAvatar.setAttribute('title', `[Group] ${group.name}`);
@@ -550,18 +588,23 @@ async function openMovePickerForKeys(keys, singleName = '') {
  * Handles creating a new character folder at current level.
  */
 async function handleCreateCharFolder() {
-    const settings = getSettings();
+    const initialSettings = getSettings();
     const form = await openFolderFormPopup({
         mode: 'create',
-        folders: settings.charFolders,
+        folders: initialSettings.charFolders,
         defaultParentId: activeCharFolderId,
     });
     if (!form) return;
 
+    const settings = getSettings();
     const created = createFolder(settings.charFolders, form);
     saveSettings();
     globalThis.toastr?.success?.(tr('folderCreated', { name: created.name }));
-    renderCharacterFolderView();
+
+    activeCharFolderId = created.parentId || null;
+    charCustomPage = 1;
+    renderCharacterFolderView({ pinnedFolderId: created.id });
+    revealFolderCard(document.getElementById('rm_print_characters_block'), created.id);
 }
 
 /**
@@ -656,6 +699,8 @@ export function navigateToCharFolder(folderId) {
     charCustomPage = 1;
     selectedCharKeys.clear();
     renderCharacterFolderView();
+    const listBlock = document.getElementById('rm_print_characters_block');
+    if (listBlock) listBlock.scrollTop = 0;
 }
 
 /**
@@ -805,16 +850,21 @@ function buildCharFolderCardsFragment(folderList, allFolders, statsMap) {
  * Applies folder rendering inside `#rm_print_characters_block`.
  * @param {{ fromNativePageLoad?: boolean }} [options]
  */
-export function renderCharacterFolderView({ fromNativePageLoad = false } = {}) {
+export function renderCharacterFolderView({ fromNativePageLoad = false, pinnedFolderId = null } = {}) {
+    charRenderSeq++;
     const listBlock = document.getElementById('rm_print_characters_block');
     const context = getStContext();
     if (!listBlock || !context) return;
 
     const settings = getSettings();
     if (!settings.enabled) {
-        clearDecorations(listBlock);
+        withSuppressedCharObserver(() => clearDecorations(listBlock));
         updateCharToolbar();
         return;
+    }
+
+    if (pinnedFolderId) {
+        charCustomPage = 1;
     }
 
     if (fromNativePageLoad) {
@@ -830,32 +880,38 @@ export function renderCharacterFolderView({ fromNativePageLoad = false } = {}) {
 
     // Case 1: Native search / tag filter is active -> keep SillyTavern's filtered results, add matching folders + badges
     if (nativeFiltered) {
-        if (lastRenderedWasCustomPage) {
-            lastRenderedWasCustomPage = false;
-        }
-        if (paginationJs instanceof HTMLElement) {
-            paginationJs.style.display = '';
-        }
-
-        listBlock.querySelectorAll('.stf-folder-card, .stf-empty-folder-hint').forEach(el => el.remove());
-
-        const searchTerm = String(document.getElementById('character_search_bar')?.value || '').trim().toLowerCase();
-        const visibleCards = [...listBlock.querySelectorAll(':scope > .character_select, :scope > .group_select')];
-        for (const card of visibleCards) {
-            if (!(card instanceof HTMLElement)) continue;
-            if (card.dataset.stfHiddenByFolder === '1') {
-                card.style.display = '';
-                delete card.dataset.stfHiddenByFolder;
+        withSuppressedCharObserver(() => {
+            if (lastRenderedWasCustomPage) {
+                lastRenderedWasCustomPage = false;
             }
-            decorateEntityCard(card, { showBadge: true });
-        }
+            if (paginationJs instanceof HTMLElement) {
+                paginationJs.style.display = '';
+            }
 
-        // Prepend folders matching search query (when searching by text)
-        if (searchTerm) {
-            const matchingFolders = sortFolders(settings.charFolders)
-                .filter(f => f.name.toLowerCase().includes(searchTerm));
-            listBlock.prepend(buildCharFolderCardsFragment(matchingFolders, settings.charFolders, statsMap));
-        }
+            listBlock.querySelectorAll('.stf-folder-card, .stf-empty-folder-hint').forEach(el => el.remove());
+
+            const searchTerm = String(document.getElementById('character_search_bar')?.value || '').trim().toLowerCase();
+            const visibleCards = [...listBlock.querySelectorAll(':scope > .character_select, :scope > .group_select')];
+            for (const card of visibleCards) {
+                if (!(card instanceof HTMLElement)) continue;
+                if (card.dataset.stfHiddenByFolder === '1') {
+                    card.style.display = '';
+                    delete card.dataset.stfHiddenByFolder;
+                }
+                decorateEntityCard(card, { showBadge: true });
+            }
+
+            // Show folders matching search query, or current-level folders when only tag filters are active
+            const foldersToRender = searchTerm
+                ? sortFolders(settings.charFolders).filter(f =>
+                    f.name.toLowerCase().includes(searchTerm) || (pinnedFolderId && f.id === pinnedFolderId),
+                )
+                : sortFolders(settings.charFolders.filter(f => (f.parentId || null) === activeCharFolderId));
+
+            if (foldersToRender.length > 0) {
+                listBlock.prepend(buildCharFolderCardsFragment(foldersToRender, settings.charFolders, statsMap));
+            }
+        });
 
         updateCharToolbar({ showCustomPager: false });
         return;
@@ -863,47 +919,52 @@ export function renderCharacterFolderView({ fromNativePageLoad = false } = {}) {
 
     const totalEntitiesCount = (context.characters?.length || 0) + (context.groups?.length || 0);
     const pageSize = Number(context.accountStorage?.getItem?.('Characters_PerPage')) || DEFAULT_PAGE_SIZE;
-    const isMultiPage = totalEntitiesCount > pageSize || Boolean(document.querySelector('#rm_print_characters_pagination .paginationjs-pages li'));
+    const nativePageCount = document.querySelectorAll('#rm_print_characters_pagination .paginationjs-page').length;
+    const isMultiPage = totalEntitiesCount > pageSize || nativePageCount > 1;
 
     // Case 2: At Root AND we can safely filter SillyTavern's native single-page DOM without pagination gaps
     if (!activeCharFolderId && (!settings.hideFolderedCharsInRoot || !isMultiPage)) {
-        if (paginationJs instanceof HTMLElement) {
-            paginationJs.style.display = '';
-        }
-
-        if (lastRenderedWasCustomPage) {
-            listBlock.replaceChildren(...lastNativePageNodes.values());
-            lastRenderedWasCustomPage = false;
-        } else {
-            listBlock.querySelectorAll('.stf-folder-card, .stf-empty-folder-hint').forEach(el => el.remove());
-            if (listBlock.querySelectorAll(':scope > .character_select, :scope > .group_select').length === 0 && lastNativePageNodes.size > 0) {
-                for (const node of lastNativePageNodes.values()) {
-                    listBlock.appendChild(node);
-                }
+        withSuppressedCharObserver(() => {
+            if (paginationJs instanceof HTMLElement) {
+                paginationJs.style.display = '';
             }
-        }
 
-        const rootFolders = sortFolders(settings.charFolders.filter(f => !f.parentId));
-        listBlock.prepend(buildCharFolderCardsFragment(rootFolders, settings.charFolders, statsMap));
-
-        const cards = [...listBlock.querySelectorAll(':scope > .character_select, :scope > .group_select')];
-        for (const card of cards) {
-            if (!(card instanceof HTMLElement)) continue;
-            const info = getEntityInfoFromElement(card);
-            const assignedId = info ? settings.charAssignments[info.key] : null;
-            const hasValidFolder = Boolean(assignedId && settings.charFolders.some(f => f.id === assignedId));
-
-            if (settings.hideFolderedCharsInRoot && hasValidFolder) {
-                card.style.display = 'none';
-                card.dataset.stfHiddenByFolder = '1';
+            if (lastRenderedWasCustomPage) {
+                listBlock.replaceChildren(...lastNativePageNodes.values());
+                lastRenderedWasCustomPage = false;
             } else {
-                if (card.dataset.stfHiddenByFolder === '1') {
-                    card.style.display = '';
-                    delete card.dataset.stfHiddenByFolder;
+                listBlock.querySelectorAll('.stf-folder-card, .stf-empty-folder-hint').forEach(el => el.remove());
+                if (listBlock.querySelectorAll(':scope > .character_select, :scope > .group_select').length === 0 && lastNativePageNodes.size > 0) {
+                    for (const node of lastNativePageNodes.values()) {
+                        listBlock.appendChild(node);
+                    }
                 }
-                decorateEntityCard(card, { showBadge: !settings.hideFolderedCharsInRoot });
             }
-        }
+
+            const rootFolders = sortFolders(settings.charFolders.filter(f => !f.parentId));
+            if (rootFolders.length > 0) {
+                listBlock.prepend(buildCharFolderCardsFragment(rootFolders, settings.charFolders, statsMap));
+            }
+
+            const cards = [...listBlock.querySelectorAll(':scope > .character_select, :scope > .group_select')];
+            for (const card of cards) {
+                if (!(card instanceof HTMLElement)) continue;
+                const info = getEntityInfoFromElement(card);
+                const assignedId = info ? settings.charAssignments[info.key] : null;
+                const hasValidFolder = Boolean(assignedId && settings.charFolders.some(f => f.id === assignedId));
+
+                if (settings.hideFolderedCharsInRoot && hasValidFolder) {
+                    card.style.display = 'none';
+                    card.dataset.stfHiddenByFolder = '1';
+                } else {
+                    if (card.dataset.stfHiddenByFolder === '1') {
+                        card.style.display = '';
+                        delete card.dataset.stfHiddenByFolder;
+                    }
+                    decorateEntityCard(card, { showBadge: !settings.hideFolderedCharsInRoot });
+                }
+            }
+        });
 
         updateCharToolbar({ showCustomPager: false });
         return;
@@ -985,7 +1046,9 @@ export function renderCharacterFolderView({ fromNativePageLoad = false } = {}) {
         fragment.appendChild(emptyEl);
     }
 
-    listBlock.replaceChildren(fragment);
+    withSuppressedCharObserver(() => {
+        listBlock.replaceChildren(fragment);
+    });
 
     updateCharToolbar({
         totalItems: sortedEntities.length,
@@ -1200,6 +1263,15 @@ function ensureCharToolbarMounted() {
             updateCharToolbar();
         }, true);
     }
+
+    // Observe `#rm_print_characters_block` mutations to recover if native/external code modifies DOM without CHARACTER_PAGE_LOADED
+    if (!charObserver && typeof MutationObserver === 'function') {
+        charObserver = new MutationObserver(() => {
+            if (isApplyingCharDom) return;
+            scheduleCharRecoveryRender();
+        });
+        charObserver.observe(listBlock, { childList: true });
+    }
 }
 
 /**
@@ -1270,9 +1342,12 @@ export function initCharFolders() {
         }
     });
 
-    // If characters are already rendered in DOM when extension initializes, apply immediately
-    if (document.querySelector('#rm_print_characters_block > .character_select, #rm_print_characters_block > .group_select')) {
-        renderCharacterFolderView({ fromNativePageLoad: true });
+    // Apply immediately even on empty character lists so root folders appear right away
+    const hasNativeCards = Boolean(
+        document.querySelector('#rm_print_characters_block > .character_select, #rm_print_characters_block > .group_select'),
+    );
+    if (document.getElementById('rm_print_characters_block')) {
+        renderCharacterFolderView({ fromNativePageLoad: hasNativeCards });
     } else {
         updateCharToolbar();
     }

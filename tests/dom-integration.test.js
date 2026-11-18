@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 
 /**
  * Minimal, faithful DOM + Event + SillyTavern context harness to test
@@ -415,11 +417,15 @@ function setupEnvironment() {
     const charSort = createEl('select', { id: 'character_sort_order' }, [sortOptAsc]);
     charSort.selectedOptions = [sortOptAsc];
 
+    const tagFilter = createEl('div', { class: 'tags rm_tag_filter' });
+    const bogusDrilldown = createEl('div', { class: 'tags rm_tag_bogus_drilldown' });
+    const rmTagControls = createEl('div', { class: 'rm_tag_controls' }, [tagFilter, bogusDrilldown]);
+
     const bulkDelBtn = createEl('i', { id: 'bulkDeleteButton' });
     const paginationJs = createEl('div', { class: 'paginationjs' });
     const pagination = createEl('div', { id: 'rm_print_characters_pagination' }, [bulkDelBtn, paginationJs]);
     const listBlock = createEl('div', { id: 'rm_print_characters_block' });
-    const rmChars = createEl('div', { id: 'rm_characters_block' }, [charSearch, charSort, pagination, listBlock]);
+    const rmChars = createEl('div', { id: 'rm_characters_block' }, [charSearch, charSort, rmTagControls, pagination, listBlock]);
 
     // Character & group & tag templates
     const charTpl = createEl('div', { id: 'character_template' }, [
@@ -480,6 +486,9 @@ function setupEnvironment() {
         }
         observe(target) {
             target.observers.push(this);
+        }
+        takeRecords() {
+            return [];
         }
         _trigger() {
             this.cb([]);
@@ -839,4 +848,97 @@ test('full DOM workflow: character folders and chat folders end-to-end', async (
     assert.equal(env.listBlock.querySelectorAll('.character_select, .group_select').length, 2);
     pager.querySelector('.stf-pager-next').click();
     assert.equal(env.listBlock.querySelectorAll('.character_select, .group_select').length, 1);
+
+    // 10. Regression: creating a root folder while on Page 2+ and scrolled down
+    // resets to page 1, resets scrollTop to 0, and immediately displays the created folder
+    env.listBlock.scrollTop = 420;
+    env.popupQueue.push((popup) => {
+        const input = popup.content.querySelector('input');
+        input.value = '根目录新文件夹';
+        popup.completeAffirmative();
+    });
+    const charNewFolderBtn = env.doc.getElementById('stf_char_toolbar').querySelector('.stf-toolbar-btn');
+    await charNewFolderBtn.click();
+    await new Promise(r => setTimeout(r, 20));
+
+    assert.equal(env.listBlock.scrollTop, 0);
+    const createdCharFolderCards = env.listBlock.querySelectorAll('.stf-folder-card-char');
+    assert.equal(createdCharFolderCards.length, 1);
+    assert.equal(createdCharFolderCards[0].querySelector('.stf-folder-name').textContent, '根目录新文件夹');
+    assert.equal(createdCharFolderCards[0].classList.contains('stf-just-created'), true);
+
+    // 11. Regression: single-page paginationjs DOM (with prev/page1/next <li>) must NOT falsely trigger multi-page Case 3
+    env.state.accountStorage.getItem = () => '50';
+    const pagContainer = env.doc.querySelector('#rm_print_characters_pagination .paginationjs');
+    const pagesUl = new MiniNode(1, 'ul');
+    for (const cls of ['paginationjs-prev', 'paginationjs-page', 'paginationjs-next']) {
+        const li = new MiniNode(1, 'li');
+        li.classList.add(cls);
+        pagesUl.appendChild(li);
+    }
+    const pagesWrap = new MiniNode(1, 'div');
+    pagesWrap.classList.add('paginationjs-pages');
+    pagesWrap.appendChild(pagesUl);
+    pagContainer.appendChild(pagesWrap);
+
+    env.renderNativeCharPage();
+    assert.equal(pager.style.display, 'none');
+    assert.equal(env.listBlock.querySelectorAll('.stf-folder-card-char').length, 1);
+
+    // 12. Regression: root folders remain visible when native tag filter is active (empty search bar)
+    const tagFilterEl = env.doc.querySelector('#rm_characters_block .rm_tag_filter');
+    const selectedTag = new MiniNode(1, 'span');
+    selectedTag.classList.add('tag', 'selected');
+    tagFilterEl.appendChild(selectedTag);
+    env.renderNativeCharPage();
+
+    assert.equal(env.listBlock.querySelectorAll('.stf-folder-card-char').length, 1);
+    assert.equal(
+        env.listBlock.querySelector('.stf-folder-card-char .stf-folder-name').textContent,
+        '根目录新文件夹',
+    );
+
+    // 13. Regression: creating a root folder while search bar has non-matching text still displays the new folder
+    const charSearchInput = env.doc.getElementById('character_search_bar');
+    charSearchInput.value = 'NonMatchingQuery';
+    env.popupQueue.push((popup) => {
+        const input = popup.content.querySelector('input');
+        input.value = '搜索时新建的根目录文件夹';
+        popup.completeAffirmative();
+    });
+    await charNewFolderBtn.click();
+    await new Promise(r => setTimeout(r, 20));
+
+    const namesDuringSearch = env.listBlock.querySelectorAll('.stf-folder-card-char .stf-folder-name').map(n => n.textContent);
+    assert.equal(namesDuringSearch.includes('搜索时新建的根目录文件夹'), true);
+
+    // Clean up search & tag filter
+    charSearchInput.value = '';
+    selectedTag.remove();
+
+    // 14. Regression: creating a chat folder at root while scrolled down and searching reveals it immediately
+    env.selectChatDiv.scrollTop = 320;
+    const chatSearchInput = env.doc.getElementById('select_chat_search');
+    chatSearchInput.value = 'NoMatchChatSearch';
+    env.popupQueue.push((popup) => {
+        const input = popup.content.querySelector('input');
+        input.value = '群聊根目录文件夹';
+        popup.completeAffirmative();
+    });
+    const chatNewFolderBtn = env.doc.getElementById('stf_chat_toolbar').querySelector('.stf-toolbar-btn');
+    await chatNewFolderBtn.click();
+    await new Promise(r => setTimeout(r, 20));
+
+    assert.equal(env.selectChatDiv.scrollTop, 0);
+    const chatFolderCards = env.selectChatDiv.querySelectorAll('.stf-folder-card-chat');
+    assert.equal(chatFolderCards.length, 1);
+    assert.equal(chatFolderCards[0].querySelector('.stf-folder-name').textContent, '群聊根目录文件夹');
+    assert.equal(chatFolderCards[0].classList.contains('stf-just-created'), true);
+
+    // 15. CSS invariant: folder cards and toolbars prevent flex collapse inside `#rm_print_characters_block`
+    const cssText = fs.readFileSync(path.resolve('d:/antigravity/sillytavern/style.css'), 'utf8');
+    assert.match(cssText, /\.stf-folder-card\s*\{[^}]*flex-shrink:\s*0/s);
+    assert.match(cssText, /\.stf-folder-card\s*\{[^}]*min-height:\s*\d+px/s);
+    assert.match(cssText, /\.stf-folder-avatar\s*\{[^}]*flex-shrink:\s*0/s);
+    assert.match(cssText, /\.stf-toolbar\s*\{[^}]*flex-shrink:\s*0/s);
 });
